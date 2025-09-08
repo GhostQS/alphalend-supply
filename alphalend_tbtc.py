@@ -144,7 +144,7 @@ def fetch_blockberry_tbtc() -> Optional[Dict[str, Any]]:
     """
     api_key = os.getenv("BLOCKBERRY_API_KEY", "").strip()
     if not api_key:
-        return None
+        raise RuntimeError("BLOCKBERRY_API_KEY is not set")
     coin = urllib.parse.quote(TBTC_COIN_TYPE, safe="")
     url = f"https://api.blockberry.one/sui/v1/coins/{coin}"
     headers = {
@@ -367,22 +367,24 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
     # If desired, try to compute percent vs TBTC global supply (Blockberry)
     if allow_fallback:
         # Only Blockberry as external source
-        used_source = None
+        used_source = "blockberry"
         circ = None
         total = None
         price_usd = None
+        error_msg: Optional[str] = None
         try:
             bb = fetch_blockberry_tbtc()
             if isinstance(bb, dict) and bb:
-                used_source = "blockberry"
                 price_usd = bb.get("price")
                 total = bb.get("supply")
                 circ = bb.get("circulatingSupply")
+            else:
+                error_msg = "Empty or invalid Blockberry response"
         except Exception as e:
-            used_source = "blockberry"
+            error_msg = str(e)
 
         # Assemble tbtc_global (present even if unavailable)
-        if used_source is not None and (price_usd is not None or circ is not None or total is not None):
+        if (price_usd is not None) or (circ is not None) or (total is not None):
             result["tbtc_global"] = {
                 "source": used_source,
                 "circulating_supply": circ,
@@ -392,8 +394,9 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
             }
         else:
             result["tbtc_global"] = {
-                "source": used_source or "blockberry",
+                "source": used_source,
                 "status": "unavailable",
+                "error": error_msg or "Unknown error contacting Blockberry",
             }
 
         # Optional percent vs global using balance_holding if TBTC market found
