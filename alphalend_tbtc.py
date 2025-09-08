@@ -25,6 +25,7 @@ import sys
 import urllib.request
 import urllib.error
 from typing import Any, Dict, List, Optional, Tuple
+import os
 
 SUI_MAINNET_RPC = "https://fullnode.mainnet.sui.io:443"
 TBTC_COIN_TYPE = (
@@ -117,7 +118,18 @@ def humanize_amount(amount: int, decimals: int) -> str:
 
 def fetch_coingecko_tbtc() -> Dict[str, Any]:
     url = "https://api.coingecko.com/api/v3/coins/tbtc?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "alphalend-supply/1.0 (+https://github.com/GhostQS/alphalend-supply)",
+    }
+    api_key = os.getenv("COINGECKO_API_KEY", "").strip()
+    if api_key:
+        # CoinGecko demo keys typically start with 'CG-'
+        if api_key.startswith("CG-"):
+            headers["x-cg-demo-api-key"] = api_key
+        else:
+            headers["x-cg-pro-api-key"] = api_key
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
