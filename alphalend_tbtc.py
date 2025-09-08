@@ -421,7 +421,7 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
 def main(argv: List[str]) -> int:
     p = argparse.ArgumentParser(description="Query AlphaLend TBTC reserves on Sui")
     p.add_argument("--rpc", default=SUI_MAINNET_RPC, help="Sui JSON-RPC endpoint")
-    p.add_argument("--no-fallback", action="store_true", help="Disable CoinGecko fallback")
+    p.add_argument("--no-fallback", action="store_true", help="Disable external fallback (Blockberry)")
     p.add_argument("--list-markets", action="store_true", help="List markets and show type hints (for debugging)")
     args = p.parse_args(argv)
     try:
