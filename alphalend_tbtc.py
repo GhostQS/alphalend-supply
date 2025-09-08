@@ -157,50 +157,6 @@ def fetch_blockberry_tbtc() -> Optional[Dict[str, Any]]:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def fetch_coingecko_markets_tbtc() -> Optional[Dict[str, Any]]:
-    """Fallback: CoinGecko markets endpoint for TBTC price/supply.
-    Returns first list element or None.
-    """
-    base = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=tbtc"
-    headers = {
-        "Accept": "application/json",
-        "User-Agent": "alphalend-supply/1.0 (+https://github.com/GhostQS/alphalend-supply)",
-    }
-    api_key = os.getenv("COINGECKO_API_KEY", "").strip()
-    if api_key:
-        if api_key.startswith("CG-"):
-            headers["x-cg-demo-api-key"] = api_key
-        else:
-            headers["x-cg-pro-api-key"] = api_key
-    req = urllib.request.Request(base, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        arr = json.loads(resp.read().decode("utf-8"))
-        if isinstance(arr, list) and arr:
-            return arr[0]
-    return None
-
-
-def fetch_coingecko_simple_price_tbtc() -> Optional[float]:
-    """Fallback: CoinGecko simple price endpoint for TBTC price.
-    Returns price in USD or None.
-    """
-    url = "https://api.coingecko.com/api/v3/simple/price?ids=tbtc&vs_currencies=usd"
-    headers = {
-        "Accept": "application/json",
-        "User-Agent": "alphalend-supply/1.0 (+https://github.com/GhostQS/alphalend-supply)",
-    }
-    api_key = os.getenv("COINGECKO_API_KEY", "").strip()
-    if api_key:
-        if api_key.startswith("CG-"):
-            headers["x-cg-demo-api-key"] = api_key
-        else:
-            headers["x-cg-pro-api-key"] = api_key
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-        return float(((data.get("tbtc") or {}).get("usd"))) if isinstance((data.get("tbtc") or {}).get("usd"), (int, float)) else None
-
-
 def enumerate_markets(client: SuiClient) -> List[Dict[str, Any]]:
     """Return a list of market objects under MARKETS_TABLE_ID.
 
@@ -408,9 +364,9 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
         }
     }
 
-    # If desired, try to compute percent vs TBTC global supply (CoinGecko)
+    # If desired, try to compute percent vs TBTC global supply (Blockberry)
     if allow_fallback:
-        # First, try Blockberry if API key available
+        # Only Blockberry as external source
         used_source = None
         circ = None
         total = None
@@ -419,42 +375,11 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
             bb = fetch_blockberry_tbtc()
             if isinstance(bb, dict) and bb:
                 used_source = "blockberry"
-                # Field names based on Blockberry sample/Dune example
                 price_usd = bb.get("price")
                 total = bb.get("supply")
                 circ = bb.get("circulatingSupply")
-        except Exception:
-            pass
-
-        # If Blockberry unavailable or incomplete, try CoinGecko chain
-        if used_source is None or price_usd is None or circ is None or total is None:
-            try:
-                cg = fetch_coingecko_tbtc()
-                md = cg.get("market_data", {})
-                price_usd = (md.get("current_price", {}) or {}).get("usd") if price_usd is None else price_usd
-                circ = md.get("circulating_supply") if circ is None else circ
-                total = md.get("total_supply") if total is None else total
-
-                if price_usd is None or circ is None or total is None:
-                    try:
-                        mkt = fetch_coingecko_markets_tbtc() or {}
-                        price_usd = price_usd if price_usd is not None else mkt.get("current_price")
-                        circ = circ if circ is not None else mkt.get("circulating_supply")
-                        total = total if total is not None else mkt.get("total_supply")
-                    except Exception:
-                        pass
-
-                if price_usd is None:
-                    try:
-                        price_usd = fetch_coingecko_simple_price_tbtc()
-                    except Exception:
-                        pass
-
-                if used_source is None:
-                    used_source = "coingecko"
-            except Exception:
-                # If CoinGecko also fails, keep used_source as is (may be None)
-                pass
+        except Exception as e:
+            used_source = "blockberry"
 
         # Assemble tbtc_global (present even if unavailable)
         if used_source is not None and (price_usd is not None or circ is not None or total is not None):
@@ -467,12 +392,11 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
             }
         else:
             result["tbtc_global"] = {
-                "source": used_source or "external",
+                "source": used_source or "blockberry",
                 "status": "unavailable",
             }
 
         # Optional percent vs global using balance_holding if TBTC market found
-        # Prefer 'total' then 'circ' from computed values above.
         if tbtc_entries:
             ts = total if isinstance(total, (int, float)) and total else (circ if isinstance(circ, (int, float)) and circ else None)
             if isinstance(ts, (int, float)) and ts:
