@@ -27,6 +27,7 @@ import urllib.error
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 import os
+import time
 
 SUI_MAINNET_RPC = "https://fullnode.mainnet.sui.io:443"
 TBTC_COIN_TYPE = (
@@ -142,7 +143,8 @@ def fetch_blockberry_tbtc() -> Optional[Dict[str, Any]]:
     GET /sui/v1/coins/{coinType}
     Headers: x-api-key: <KEY>
     """
-    api_key = os.getenv("BLOCKBERRY_API_KEY", "").strip()
+    # Read API key from environment. Do NOT hardcode secrets in code.
+    api_key = os.getenv("BLOCKBERRY_API_KEY", "").strip() or os.getenv("BLOCKBERRY_TOKEN", "").strip()
     if not api_key:
         raise RuntimeError("BLOCKBERRY_API_KEY is not set")
     coin = urllib.parse.quote(TBTC_COIN_TYPE, safe="")
@@ -151,10 +153,23 @@ def fetch_blockberry_tbtc() -> Optional[Dict[str, Any]]:
         "Accept": "application/json",
         "x-api-key": api_key,
         "User-Agent": "alphalend-supply/1.0 (+https://github.com/GhostQS/alphalend-supply)",
+        "Connection": "close",
     }
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    timeout_s = float(os.getenv("BLOCKBERRY_TIMEOUT_SECONDS", "15"))
+    retries = int(os.getenv("BLOCKBERRY_RETRIES", "3"))
+    last_err: Optional[str] = None
+    for attempt in range(retries + 1):
+        try:
+            # Use GET as per Blockberry coin info endpoint
+            req = urllib.request.Request(url, headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            last_err = f"attempt {attempt+1}/{retries+1}: {e}"
+            if attempt < retries:
+                time.sleep(min(2 ** attempt, 3))
+                continue
+            raise RuntimeError(f"Blockberry fetch failed: {last_err}")
 
 
 def enumerate_markets(client: SuiClient) -> List[Dict[str, Any]]:
@@ -375,6 +390,7 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
         try:
             bb = fetch_blockberry_tbtc()
             if isinstance(bb, dict) and bb:
+                # Map fields exactly as in provided schema
                 price_usd = bb.get("price")
                 total = bb.get("supply")
                 circ = bb.get("circulatingSupply")
@@ -385,11 +401,17 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
 
         # Assemble tbtc_global (present even if unavailable)
         if (price_usd is not None) or (circ is not None) or (total is not None):
+            # Enrich with additional fields from Blockberry response when available
             result["tbtc_global"] = {
                 "source": used_source,
                 "circulating_supply": circ,
                 "total_supply": total,
                 "price_usd": price_usd,
+                "supply_usd": (bb.get("supplyInUsd") if isinstance(bb, dict) else None),
+                "market_cap_usd": (bb.get("marketCap") if isinstance(bb, dict) else None),
+                "total_volume": (bb.get("totalVolume") if isinstance(bb, dict) else None),
+                "holders_count": (bb.get("holdersCount") if isinstance(bb, dict) else None),
+                "dominance": (bb.get("dominance") if isinstance(bb, dict) else None),
                 "status": "ok",
             }
         else:
