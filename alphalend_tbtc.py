@@ -24,6 +24,7 @@ import json
 import sys
 import urllib.request
 import urllib.error
+import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 import os
 
@@ -129,6 +130,28 @@ def fetch_coingecko_tbtc() -> Dict[str, Any]:
             headers["x-cg-demo-api-key"] = api_key
         else:
             headers["x-cg-pro-api-key"] = api_key
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def fetch_blockberry_tbtc() -> Optional[Dict[str, Any]]:
+    """Fetch TBTC coin info from Blockberry (requires API key).
+
+    Uses endpoint pattern documented by Blockberry:
+    GET /sui/v1/coins/{coinType}
+    Headers: x-api-key: <KEY>
+    """
+    api_key = os.getenv("BLOCKBERRY_API_KEY", "").strip()
+    if not api_key:
+        return None
+    coin = urllib.parse.quote(TBTC_COIN_TYPE, safe="")
+    url = f"https://api.blockberry.one/sui/v1/coins/{coin}"
+    headers = {
+        "Accept": "application/json",
+        "x-api-key": api_key,
+        "User-Agent": "alphalend-supply/1.0 (+https://github.com/GhostQS/alphalend-supply)",
+    }
     req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -387,51 +410,80 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
 
     # If desired, try to compute percent vs TBTC global supply (CoinGecko)
     if allow_fallback:
+        # First, try Blockberry if API key available
+        used_source = None
+        circ = None
+        total = None
+        price_usd = None
         try:
-            cg = fetch_coingecko_tbtc()
-            md = cg.get("market_data", {})
-            # Primary values
-            price_usd = (md.get("current_price", {}) or {}).get("usd")
-            circ = md.get("circulating_supply")
-            total = md.get("total_supply")
+            bb = fetch_blockberry_tbtc()
+            if isinstance(bb, dict) and bb:
+                used_source = "blockberry"
+                # Field names based on Blockberry sample/Dune example
+                price_usd = bb.get("price")
+                total = bb.get("supply")
+                circ = bb.get("circulatingSupply")
+        except Exception:
+            pass
 
-            # Secondary fallback via /coins/markets if any primary is missing
-            if price_usd is None or circ is None or total is None:
-                try:
-                    mkt = fetch_coingecko_markets_tbtc() or {}
-                    price_usd = price_usd if price_usd is not None else mkt.get("current_price")
-                    circ = circ if circ is not None else mkt.get("circulating_supply")
-                    total = total if total is not None else mkt.get("total_supply")
-                except Exception:
-                    pass
+        # If Blockberry unavailable or incomplete, try CoinGecko chain
+        if used_source is None or price_usd is None or circ is None or total is None:
+            try:
+                cg = fetch_coingecko_tbtc()
+                md = cg.get("market_data", {})
+                price_usd = (md.get("current_price", {}) or {}).get("usd") if price_usd is None else price_usd
+                circ = md.get("circulating_supply") if circ is None else circ
+                total = md.get("total_supply") if total is None else total
 
-            # Tertiary fallback for price via /simple/price
-            if price_usd is None:
-                try:
-                    price_usd = fetch_coingecko_simple_price_tbtc()
-                except Exception:
-                    pass
+                if price_usd is None or circ is None or total is None:
+                    try:
+                        mkt = fetch_coingecko_markets_tbtc() or {}
+                        price_usd = price_usd if price_usd is not None else mkt.get("current_price")
+                        circ = circ if circ is not None else mkt.get("circulating_supply")
+                        total = total if total is not None else mkt.get("total_supply")
+                    except Exception:
+                        pass
 
+                if price_usd is None:
+                    try:
+                        price_usd = fetch_coingecko_simple_price_tbtc()
+                    except Exception:
+                        pass
+
+                if used_source is None:
+                    used_source = "coingecko"
+            except Exception:
+                # If CoinGecko also fails, keep used_source as is (may be None)
+                pass
+
+        # Assemble tbtc_global (present even if unavailable)
+        if used_source is not None and (price_usd is not None or circ is not None or total is not None):
             result["tbtc_global"] = {
-                "source": "coingecko",
+                "source": used_source,
                 "circulating_supply": circ,
                 "total_supply": total,
                 "price_usd": price_usd,
                 "status": "ok",
             }
-            # Optional percent vs global using balance_holding if TBTC market found
-            if tbtc_entries:
-                ts = md.get("total_supply") or md.get("circulating_supply")
-                if isinstance(ts, (int, float)) and ts:
-                    # balance_holding likely in raw units; we provide both raw and a human hint assuming 8 decimals
-                    entry0 = tbtc_entries[0]
-                    bh_raw = entry0.get("balance_holding")
-                    result["percent_estimates"] = {
-                        "note": "Reserve balance assumed raw units; human assumes 8 decimals",
-                        "balance_holding_raw": bh_raw,
-                        "balance_holding_human8": (str(bh_raw / 10**8) if isinstance(bh_raw, int) else None),
-                        "global_total_supply": ts,
-                    }
+        else:
+            result["tbtc_global"] = {
+                "source": used_source or "external",
+                "status": "unavailable",
+            }
+
+        # Optional percent vs global using balance_holding if TBTC market found
+        # Prefer 'total' then 'circ' from computed values above.
+        if tbtc_entries:
+            ts = total if isinstance(total, (int, float)) and total else (circ if isinstance(circ, (int, float)) and circ else None)
+            if isinstance(ts, (int, float)) and ts:
+                entry0 = tbtc_entries[0]
+                bh_raw = entry0.get("balance_holding")
+                result["percent_estimates"] = {
+                    "note": "Reserve balance assumed raw units; human assumes 8 decimals",
+                    "balance_holding_raw": bh_raw,
+                    "balance_holding_human8": (str(bh_raw / 10**8) if isinstance(bh_raw, int) else None),
+                    "global_total_supply": ts,
+                }
         except Exception as e:
             result["tbtc_global"] = {
                 "source": "coingecko",
