@@ -351,6 +351,7 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
                 "circulating_supply": md.get("circulating_supply"),
                 "total_supply": md.get("total_supply"),
                 "price_usd": (md.get("current_price", {}) or {}).get("usd"),
+                "status": "ok",
             }
             # Optional percent vs global using balance_holding if TBTC market found
             if tbtc_entries:
@@ -365,8 +366,12 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
                         "balance_holding_human8": (str(bh_raw / 10**8) if isinstance(bh_raw, int) else None),
                         "global_total_supply": ts,
                     }
-        except Exception:
-            pass
+        except Exception as e:
+            result["tbtc_global"] = {
+                "source": "coingecko",
+                "status": "unavailable",
+                "error": str(e),
+            }
 
     return result
 
