@@ -408,12 +408,6 @@ def query_alphalend_tbtc(endpoint: str = SUI_MAINNET_RPC, allow_fallback: bool =
                     "balance_holding_human8": (str(bh_raw / 10**8) if isinstance(bh_raw, int) else None),
                     "global_total_supply": ts,
                 }
-        except Exception as e:
-            result["tbtc_global"] = {
-                "source": "coingecko",
-                "status": "unavailable",
-                "error": str(e),
-            }
 
     return result
 

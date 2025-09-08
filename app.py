@@ -25,6 +25,8 @@ import json
 import sys
 import urllib.request
 import urllib.error
+import urllib.parse
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -121,14 +123,25 @@ def humanize_amount(amount: int, decimals: int) -> str:
     return f"{integer}{('.' + frac_str) if frac_str else ''}"
 
 
-def fetch_coingecko_tbtc() -> Dict[str, Any]:
-    """Fetch TBTC market and supply data from CoinGecko.
+def fetch_blockberry_tbtc() -> Dict[str, Any]:
+    """Fetch TBTC info from Blockberry.
 
-    Returns keys: id, symbol, name, market_data{ current_price{usd}, market_cap{usd},
-    circulating_supply, total_supply }.
+    Endpoint: GET https://api.blockberry.one/sui/v1/coins/{coinType}
+    Header: x-api-key: $BLOCKBERRY_API_KEY
     """
-    url = "https://api.coingecko.com/api/v3/coins/tbtc?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    api_key = os.getenv("BLOCKBERRY_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("BLOCKBERRY_API_KEY is not set")
+    coin_enc = urllib.parse.quote(TBTC_COIN_TYPE, safe="")
+    url = f"https://api.blockberry.one/sui/v1/coins/{coin_enc}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "x-api-key": api_key,
+            "User-Agent": "alphalend-supply/1.0 (+https://github.com/GhostQS/alphalend-supply)",
+        },
+    )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -168,22 +181,21 @@ def fetch_tbtc_data(owner: Optional[str] = None, endpoint: str = SUI_MAINNET_RPC
         ),
     }
 
-    # Optional external fallback: CoinGecko for supply/price when Sui supply unavailable
+    # Optional external fallback: Blockberry for supply/price when Sui supply unavailable
     if total_supply is None and allow_fallback:
         try:
-            cg = fetch_coingecko_tbtc()
-            md = cg.get("market_data", {})
+            bb = fetch_blockberry_tbtc()
             result["supply_fallback"] = {
-                "source": "coingecko",
-                "circulating_supply": md.get("circulating_supply"),
-                "total_supply": md.get("total_supply"),
-                "price_usd": (md.get("current_price", {}) or {}).get("usd"),
-                "market_cap_usd": (md.get("market_cap", {}) or {}).get("usd"),
+                "source": "blockberry",
+                "circulating_supply": bb.get("circulatingSupply"),
+                "total_supply": bb.get("supply"),
+                "price_usd": bb.get("price"),
+                "market_cap_usd": bb.get("marketCap"),
                 "status": "ok",
             }
         except Exception as e:  # network or API change
             result["supply_fallback"] = {
-                "source": "coingecko",
+                "source": "blockberry",
                 "status": "unavailable",
                 "error": str(e),
             }
@@ -212,7 +224,7 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--no-fallback",
-        help="Disable external fallback (CoinGecko) when total supply is unavailable on Sui",
+        help="Disable external fallback (Blockberry) when total supply is unavailable on Sui",
         action="store_true",
     )
     args = parser.parse_args(argv)

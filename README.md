@@ -12,7 +12,7 @@ A small Python CLI to fetch TBTC metadata and stats from Sui mainnet via JSON-RP
 - Fetch coin metadata: name, symbol, decimals, description, icon URL
 - Fetch total supply if available (graceful fallback when TreasuryCap missing)
 - Optional: Fetch an address's TBTC balance
-- When Sui total supply is unavailable, automatically fetch global TBTC supply/price from CoinGecko (can be disabled)
+- When Sui total supply is unavailable, automatically fetch global TBTC supply/price from Blockberry (can be disabled)
 
 ## Requirements
 
@@ -45,7 +45,7 @@ Example output:
   }
   ,
   "supply_fallback": {
-    "source": "coingecko",
+    "source": "blockberry",
     "circulating_supply": 5916.10845822,
     "total_supply": 5915.607324160001,
     "price_usd": 111020,
@@ -67,7 +67,7 @@ To use a different RPC endpoint:
 python3 app.py --rpc https://fullnode.mainnet.sui.io:443
 ```
 
-To disable the external fallback (CoinGecko) and show only on-chain results:
+To disable the external fallback (Blockberry) and show only on-chain results:
 
 ```bash
 python3 app.py --no-fallback
@@ -75,12 +75,12 @@ python3 app.py --no-fallback
 
 ## Notes on supply and TVL
 
-- The `suix_getTotalSupply` RPC relies on a standard `TreasuryCap` object. Some bridged tokens (including TBTC on Sui) do not expose a queryable `TreasuryCap`, so on-chain `total_supply` returns an error and is marked as `unavailable`. In this case the app fetches global TBTC supply and price from CoinGecko as a fallback.
+- The `suix_getTotalSupply` RPC relies on a standard `TreasuryCap` object. Some bridged tokens (including TBTC on Sui) do not expose a queryable `TreasuryCap`, so on-chain `total_supply` returns an error and is marked as `unavailable`. In this case the app fetches global TBTC supply and price from Blockberry as a fallback.
 - "TVL" typically refers to value locked in DeFi protocols on Sui. Calculating TVL accurately requires aggregating balances from known protocol pool objects (e.g., Cetus/Turbos liquidity pools, lending markets), or using a third-party indexer (e.g., DeFiLlama).
 
 If you want, we can extend this CLI to:
 
-- Fetch TBTC price from a public API (e.g., CoinGecko) and compute market cap when total supply is available.
+- Fetch TBTC price from a public API (e.g., Blockberry) and compute market cap when total supply is available.
 - Compute Sui-specific TBTC TVL by summing TBTC balances in known protocol pools.
 - Add holder counts and circulating supply estimates via an indexer.
 
@@ -101,6 +101,16 @@ pip install -r requirements.txt
 ```bash
 uvicorn api:app --reload --port 8000
 ```
+
+### Environment
+
+Set the Blockberry API key (required for supply/price fallback):
+
+```bash
+export BLOCKBERRY_API_KEY="YOUR_BLOCKBERRY_API_KEY"
+```
+
+On Render.com, add `BLOCKBERRY_API_KEY` in the service Environment.
 
 ### Endpoints
 
@@ -127,7 +137,7 @@ Response:
     "borrowed_amount_human8": "47.62220369"
   },
   "fallback": {
-    "source": "coingecko",
+    "source": "blockberry",
     "circulating_supply": 5915.607324160001,
     "total_supply": 5915.607324160001,
     "price_usd": 111000
