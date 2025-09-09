@@ -1,27 +1,20 @@
 #!/usr/bin/env python3
 """
-FastAPI service exposing AlphaLend TBTC pooled balance on Sui.
+FastAPI service exposing TBTC data on Sui (AlphaLend, AlphaFi, Bucket).
 
 Endpoints:
 - GET /health
 - GET /alphalend/tbtc
-    Query params:
-      - rpc (optional): Sui JSON-RPC endpoint. Default: https://fullnode.mainnet.sui.io:443
-      - no_fallback (optional): if present and true, disables CoinGecko fallback. Default: false
+- GET /alphafi/tbtc
+- GET /bucket/tbtc
 
-Returns JSON like:
-{
-  "coin_type": "...::TBTC::TBTC",
-  "alphalend": {
-    "markets_table_id": "0x...",
-    "market_object_id": "0x...",
-    "balance_holding_raw": 5566768803,
-    "balance_holding_human8": "55.66768803",
-    "borrowed_amount_raw": 4762220369,
-    "borrowed_amount_human8": "47.62220369"
-  },
-  "fallback": { ... optional CoinGecko info ... }
-}
+Common Query params:
+- rpc (optional): Sui JSON-RPC endpoint. Default: https://fullnode.mainnet.sui.io:443
+- no_fallback (optional): if present and true, disables external fallback (Blockberry) where applicable. Default: false
+
+Notes:
+- External price/supply fallback uses Blockberry via the `x-api-key` header. Provide
+  BLOCKBERRY_API_KEY in the environment or use a per-endpoint query param where available.
 """
 from __future__ import annotations
 
@@ -36,8 +29,10 @@ from alphalend_tbtc import (
     TBTC_COIN_TYPE,
     SUI_MAINNET_RPC,
 )
+from alphafi_tbtc import query_alphafi_tbtc
+from bucket_tbtc import query_bucket_tbtc, DEFAULT_BUCKET_PARENT_IDS
 
-app = FastAPI(title="Sui TBTC AlphaLend API", version="0.1.0")
+app = FastAPI(title="Sui TBTC API (AlphaLend / AlphaFi / Bucket)", version="0.2.0")
 
 
 @app.get("/health")
@@ -112,6 +107,47 @@ def get_alphalend_tbtc_pooled(
         "balance_holding_raw": bh_raw,
         "balance_holding_human8": bh_human,
     })
+
+
+@app.get("/alphafi/tbtc")
+def get_alphafi_tbtc(
+    rpc: str = Query(default=SUI_MAINNET_RPC),
+    no_fallback: bool = Query(default=False),
+    parent_id: Optional[str] = Query(default=None, description="AlphaFi parent dynamic fields object ID. If omitted, reads ALPHAFI_PARENT_ID env var."),
+) -> JSONResponse:
+    # Resolve parent id
+    pid = parent_id or os.getenv("ALPHAFI_PARENT_ID")
+    if not pid:
+        return JSONResponse({
+            "error": "Missing AlphaFi parent_id (set query param or ALPHAFI_PARENT_ID env var)",
+        }, status_code=400)
+
+    data = query_alphafi_tbtc(parent_id=pid, endpoint=rpc, allow_fallback=(not no_fallback), list_fields=False)
+    return JSONResponse(data)
+
+
+@app.get("/bucket/tbtc")
+def get_bucket_tbtc(
+    rpc: str = Query(default=SUI_MAINNET_RPC),
+    no_fallback: bool = Query(default=False),
+    parent_id: Optional[str] = Query(default=None, description="Bucket parent dynamic fields object ID(s). Comma-separated to pass multiple. If omitted, uses built-in defaults."),
+    blockberry_api_key: Optional[str] = Query(default=None, description="Override Blockberry API key (else read env)"),
+) -> JSONResponse:
+    # Parse parent ids: comma-separated or default list
+    parent_ids = []
+    if parent_id:
+        parent_ids = [p.strip() for p in parent_id.split(',') if p.strip()]
+    if not parent_ids:
+        parent_ids = DEFAULT_BUCKET_PARENT_IDS
+
+    data = query_bucket_tbtc(
+        parent_ids=parent_ids,
+        endpoint=rpc,
+        allow_fallback=(not no_fallback),
+        list_fields=False,
+        blockberry_api_key=blockberry_api_key,
+    )
+    return JSONResponse(data)
 
 
 if __name__ == "__main__":
